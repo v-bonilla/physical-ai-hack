@@ -23,12 +23,12 @@ Done when:
 
 | bar.beat | 1.1 | 1.2 | 1.3 | 1.4 | 2.1 | 2.2 | ... |
 |---|---|---|---|---|---|---|---|
-| shoulder pan offset | +15 | -15 | +15 | -15 | +15 | -15 | ... |
+| shoulder pan offset (deg) | +15 | -15 | +15 | -15 | +15 | -15 | ... |
 
 - Eased between beats (smoothstep), so the arm arrives exactly on each beat.
 - Offsets are relative to the pose the arm holds at connect, so the move is safe with any
   calibration. Every other joint holds still.
-- Units are LeRobot normalized units (-100 to 100). `--amplitude` sets the swing, capped at 30.
+- Units are degrees (lerobot `use_degrees=True` default). `--amplitude` sets the swing, capped at 30.
 
 ## How a beat becomes motion
 
@@ -68,6 +68,13 @@ uv run dancebot dance songs/test.mp3 --dry-run
 uv run dancebot dance songs/test.mp3 --port /dev/tty.usbmodemXXXX --robot-id dancer --amplitude 8
 ```
 
+Tuning knobs:
+
+- `--latency-ms N` sets the command lead (default 80). `[` and `]` nudge it live.
+- `--beat-mult 2` doubles the detected tempo when the tracker picks half time. `0.5` halves it.
+- `--backend librosa` swaps the beat tracker. Try both on each demo song.
+- `--release` cuts torque at exit. By default the arm keeps holding its start pose.
+
 ## Upgrades after the first dance, cheapest win first
 
 | Code | Upgrade | Cost | Why |
@@ -82,9 +89,17 @@ uv run dancebot dance songs/test.mp3 --port /dev/tty.usbmodemXXXX --robot-id dan
   laptop speakers.
 - **R2 Venue network.** Download the beat checkpoint and every demo song before 17:00.
 - **R3 Servo heat.** STS3215 servos heat up under load. Keep runs under 3 minutes, rest between.
-- **R4 Start pose.** The sway is relative to the pose at connect. Set the arm upright and clear of
-  the table before every run.
+- **R4 Start pose and exit.** The sway is relative to the pose at connect. Set the arm upright and
+  clear of the table before every run. The arm holds that pose with torque on after exit, so support
+  it by hand before `--release` or unplugging.
 - **R5 Fast songs.** Above about 140 BPM the swing may lag. Keep demo songs at or below that.
+- **R6 Wrong tempo.** The beat tracker can lock to half or double time (seen in testing). Check the BPM on the
+  status line for each demo song and fix it with `--beat-mult` or `--backend`.
+- **R7 Calibration id.** `--robot-id` must match the id used in `lerobot-calibrate`. lerobot 0.6.1
+  reads `~/.cache/huggingface/lerobot/calibration/robots/so_follower/<id>.json`; files from older
+  lerobot versions live elsewhere and are not found. dancebot refuses to start without it.
+- **R8 After `--release`.** Power-cycle the arm before the next run. lerobot may drive to a stale
+  goal position on connect if the arm was moved by hand.
 
 ## Roles
 
