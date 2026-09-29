@@ -4,6 +4,20 @@
  "tempo_bpm": 129.2,
  "seconds_per_beat": 0.4644,
  "downbeat_phase": 2,
+ "overall_energy": 0.611,
+ "overall_energy_parts": {
+  "lautstaerke": 0.53,
+  "tempo": 0.74,
+  "rhythmus": 0.62,
+  "perkussiv": 0.55
+ },
+ "accent_strength": [
+  5.847,
+  5.466,
+  4.998,
+  5.745
+ ],
+ "accent_phase": 1,
  "music_start": 0.464,
  "fade_in_end": 5.503,
  "fade_out_start": 152.834,

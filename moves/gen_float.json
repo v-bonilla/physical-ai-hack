@@ -2064,5 +2064,7 @@
    18.0
   ]
  ],
- "visual_shift_beats": 0.0
+ "visual_shift_beats": 0.0,
+ "punch": false,
+ "accent": false
 }

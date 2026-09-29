@@ -174,7 +174,7 @@ MOVES = {
             ("shoulder_pan", 20, 4, 0.0), ("shoulder_lift", 12, 2, -np.pi / 2), ("wrist_flex", 10, 2, np.pi / 2)]),
     ),
     "gen_robot": dict(
-        energy="high", beats=4,
+        energy="high", beats=4, punch=False,  # already arrives hard on each beat
         description="Roboter-Tanz: auf jedem Beat ruckartig in eine neue Pose, dann einfrieren (staccato).",
         loop=lambda: keyframes_hold(4, [(0, dict(shoulder_pan=-10, shoulder_lift=8, wrist_roll=8)),
                                         (1, dict(shoulder_pan=-10, elbow_flex=-12, wrist_flex=-8)),
@@ -201,8 +201,24 @@ MOVES = {
         loop=lambda: keyframes(4, [(0, dict(shoulder_lift=25, elbow_flex=-25, wrist_flex=-15)), (1, {}),
                                    (2, dict(shoulder_lift=25, elbow_flex=-25, wrist_flex=-15)), (3, {})]),
     ),
+    "gen_circle": dict(
+        energy="mid", beats=4,
+        description="Kreis: der Greifer malt pro Takt einen grossen Kreis in die Luft (Basis + Schulter), "
+                    "die Hand dreht leicht mit - ganz links/rechts/oben/unten jeweils genau auf einem Beat.",
+        # pan = sin, lift = cos over one bar: extremes of pan on beats 1/3, of lift on beats 0/2.
+        loop=lambda: sines(4, base=(0, 20, -10, 0, 10, 10), parts=[
+            ("shoulder_pan", 20, 4, 0.0), ("shoulder_lift", 16, 4, np.pi / 2), ("elbow_flex", -10, 4, np.pi / 2),
+            ("wrist_roll", 12, 4, 0.0)]),
+    ),
+    "gen_chop": dict(
+        energy="high", beats=4, punch=False, accent=True,
+        description="Karate-Hieb: der Arm holt aus und schlaegt auf den Akzent-Beats (2x pro Takt) hart "
+                    "nach unten, Greifer schnappt zu - danach langsam wieder hoch.",
+        loop=lambda: hits(4, [1, 3], {"shoulder_lift": -18, "elbow_flex": 22, "wrist_flex": 18, "gripper": -10},
+                          attack=0.5, release=1.3) + np.array([0, 18, -18, -10, 0, 12]),
+    ),
     "gen_wave": dict(
-        energy="high", beats=4,
+        energy="high", beats=4, punch=False,  # flowing on purpose; looks right as it is
         description="Die Welle: laeuft Beat fuer Beat von der Schulter ueber Ellbogen und Handgelenk bis zur "
                     "Drehung - jedes Gelenk kehrt genau einen Beat nach dem vorigen um. Basis schwingt leicht mit.",
         # Stagger of exactly one beat (pi/2 of the 4-beat period) per joint. The eye follows the whole arm,
@@ -234,6 +250,10 @@ def main():
             "loop": np.round(loop, 2).tolist(),
             # Deliberate advance for the eye (whole-arm timing measured in video), see beat_audit.py.
             "visual_shift_beats": WAVE_VISUAL_SHIFT if name == "gen_wave" else 0.0,
+            # dance.py: punch = reshape back-and-forth into "accelerate, stop hard on the beat";
+            # accent = hits are moved onto the song's accent beats (where its snare/clap is).
+            "punch": spec.get("punch", spec["energy"] != "flow"),
+            "accent": spec.get("accent", False),
         }, indent=1))
         rm.save_plot(out.with_suffix(".png"), [loop], loop, spec["beats"])
         note = f"auf Sicherheitsbereich begrenzt (bis {clipped:.0f} Grad)" if clipped > 0.5 else ""

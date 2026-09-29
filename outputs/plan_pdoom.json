@@ -50,49 +50,49 @@
  },
  {
   "start": 27.12,
-  "move": "gen_disco",
+  "move": "gen_chop",
   "tempo": "full",
   "amp": 0.89,
   "label": "chorus"
  },
  {
   "start": 30.77,
-  "move": "gen_clap",
+  "move": "gen_circle",
   "tempo": "full",
   "amp": 0.86,
   "label": "verse"
  },
  {
   "start": 34.41,
-  "move": "gen_hello",
+  "move": "gen_clap",
   "tempo": "full",
   "amp": 0.86,
   "label": "verse"
  },
  {
   "start": 38.03,
-  "move": "gen_pendulum",
+  "move": "gen_hello",
   "tempo": "full",
   "amp": 0.86,
   "label": "verse"
  },
  {
   "start": 41.68,
-  "move": "gen_twist",
+  "move": "gen_pendulum",
   "tempo": "full",
   "amp": 0.86,
   "label": "verse"
  },
  {
   "start": 45.3,
-  "move": "sway",
+  "move": "gen_twist",
   "tempo": "full",
   "amp": 0.86,
   "label": "verse"
  },
  {
   "start": 48.95,
-  "move": "gen_clap",
+  "move": "sway",
   "tempo": "full",
   "amp": 0.86,
   "label": "verse"
@@ -120,21 +120,21 @@
  },
  {
   "start": 63.48,
-  "move": "gen_pump",
+  "move": "gen_disco",
   "tempo": "full",
   "amp": 0.89,
   "label": "chorus"
  },
  {
   "start": 67.13,
-  "move": "gen_hello",
+  "move": "gen_circle",
   "tempo": "full",
   "amp": 0.89,
   "label": "verse"
  },
  {
   "start": 70.77,
-  "move": "gen_pendulum",
+  "move": "gen_clap",
   "tempo": "full",
   "amp": 0.89,
   "label": "verse"
@@ -148,21 +148,21 @@
  },
  {
   "start": 78.04,
-  "move": "gen_robot",
+  "move": "gen_pump",
   "tempo": "full",
   "amp": 0.91,
   "label": "chorus"
  },
  {
   "start": 81.69,
-  "move": "gen_twist",
+  "move": "gen_hello",
   "tempo": "full",
   "amp": 0.89,
   "label": "verse"
  },
  {
   "start": 85.31,
-  "move": "sway",
+  "move": "gen_pendulum",
   "tempo": "full",
   "amp": 0.89,
   "label": "verse"
@@ -218,21 +218,21 @@
  },
  {
   "start": 114.41,
-  "move": "gen_disco",
+  "move": "gen_robot",
   "tempo": "full",
   "amp": 0.99,
   "label": "chorus"
  },
  {
   "start": 118.05,
-  "move": "gen_clap",
+  "move": "gen_twist",
   "tempo": "full",
   "amp": 0.96,
   "label": "verse"
  },
  {
   "start": 121.67,
-  "move": "gen_hello",
+  "move": "sway",
   "tempo": "full",
   "amp": 0.96,
   "label": "verse"
@@ -246,21 +246,21 @@
  },
  {
   "start": 128.96,
-  "move": "gen_pump",
+  "move": "gen_chop",
   "tempo": "full",
   "amp": 1.0,
   "label": "chorus"
  },
  {
   "start": 132.59,
-  "move": "gen_pendulum",
+  "move": "gen_circle",
   "tempo": "full",
   "amp": 0.76,
   "label": "verse"
  },
  {
   "start": 136.23,
-  "move": "gen_twist",
+  "move": "gen_clap",
   "tempo": "full",
   "amp": 0.76,
   "label": "verse"
@@ -274,7 +274,7 @@
  },
  {
   "start": 143.5,
-  "move": "gen_robot",
+  "move": "gen_disco",
   "tempo": "full",
   "amp": 0.94,
   "label": "chorus"

@@ -50,6 +50,9 @@ FAMILY_FALLBACK = {"flow": ["flow", "low", "mid"], "low": ["low", "flow", "mid"]
 SLOT_BARS = 2  # a new move at least every 2 bars (8 beats)
 CHORUS_ANCHOR = "gen_wave"  # returns on every other slot of a chorus
 REST_POSE = np.array([-12.0, -106.0, 0.0, 100.0, 10.0, 0.0])  # stand-in for the arm's rest pose in --dry-run
+# How far each joint trails its command (ms), measured on this arm in the dance-log reports (fast moves).
+# The elbow carries the most load and lags ~40 ms more than base and wrist.
+JOINT_LAG_MS = np.array([100.0, 115.0, 135.0, 100.0, 115.0, 115.0])
 
 
 # ----------------------------------------------------------------------------- moves
@@ -63,13 +66,18 @@ class Move:
     description: str = ""
     generated: bool = False
     max_tempo: str = "full"  # "half" for moves too big to play at full song tempo
+    punch: bool = True  # reshape back-and-forth into "accelerate, stop hard on the beat"
+    accent: bool = False  # percussive hits that belong on the song's accent beats
 
     @classmethod
     def load(cls, path: Path) -> "Move":
         d = json.loads(path.read_text())
+        energy = d.get("energy", "mid")
         return cls(d["name"], int(d["beats"]), np.array(d["loop"], dtype=float), int(d["points_per_beat"]),
-                   d.get("energy", "mid"), d.get("description", ""), bool(d.get("generated", False)),
-                   d.get("max_tempo", "full"))
+                   energy, d.get("description", ""), bool(d.get("generated", False)),
+                   d.get("max_tempo", "full"),
+                   bool(d.get("punch", energy in ("low", "mid", "high") and d.get("max_tempo", "full") == "full")),
+                   bool(d.get("accent", False)))
 
     def bars_needed(self, tempo: str) -> int:
         return int(np.ceil(self.beats / RATES[tempo] / 4))
@@ -91,6 +99,39 @@ class Move:
         dt = seconds_per_beat / rate / self.ppb
         closed = np.vstack([self.loop, self.loop[:1]])
         return float(np.abs(np.diff(closed, axis=0)).max() / dt * min(amp, 1.0))
+
+
+def punch_loop(loop: np.ndarray, strength: float) -> np.ndarray:
+    """Re-time every stroke between two turning points: leave slowly, ARRIVE at full speed, stop hard.
+
+    A smooth sine drifts into its turning point; the fastest (most eye-catching) motion then sits
+    between the beats and the move reads as off-beat even though it turns exactly on the beat.
+    Dancers do the opposite. Per joint and per stroke the time is warped so that the original
+    ease-in-out stroke (1 - cos(pi v)) / 2 becomes an ease-in stroke 1 - cos(pi u / 2).
+    Turning points, poses and peak speed stay the same; strength 0 = unchanged, 1 = full punch.
+    """
+    if strength <= 0:
+        return loop
+    n = len(loop)
+    out = loop.copy()
+    idx = np.arange(n)
+    for j in range(loop.shape[1]):
+        x = loop[:, j]
+        rng = x.max() - x.min()
+        if rng < 3:
+            continue
+        tps = [k for k in range(n) if (x[k] - x[k - 1]) * (x[(k + 1) % n] - x[k]) < 0 and abs(x[k] - x.mean()) > 0.2 * rng]
+        if len(tps) < 2:
+            continue
+        xx = np.concatenate([x, x, x])  # for wrap-around interpolation
+        for a, b in zip(tps, tps[1:] + [tps[0] + n]):
+            length = b - a
+            u = np.arange(length) / length
+            h = np.arccos(np.clip(2 * np.cos(0.5 * np.pi * u) - 1, -1, 1)) / np.pi
+            v = (1 - strength) * u + strength * h
+            src = a + v * length + n
+            out[(a + np.arange(length)) % n, j] = np.interp(src, np.arange(3 * n), xx)
+    return out
 
 
 def load_moves(only: str | None) -> dict[str, Move]:
@@ -141,6 +182,12 @@ class Segment:
     tempo: str  # "full" | "half"
     amp: float = 1.0
     label: str = ""
+    shift: float = 0.0  # loop phase offset in beats (moves accent hits onto the song's accent beats)
+
+
+def accent_shift(move: Move, song: "Song") -> float:
+    """Accent moves hit on loop beats 1 and 3 (0-based); shift them onto the song's accent beats."""
+    return float(1 - song.a.get("accent_phase", 1)) if move.accent else 0.0
 
 
 def choose_tempo(move: Move, spb: float, amp: float, speed_limit: float, wanted: str = "auto") -> str:
@@ -155,7 +202,8 @@ def plan_test(song: Song, moves, speed_limit) -> list[Segment]:
     names, segs = list(moves), []
     for k in range(len(song.bars) // 4):
         m = moves[names[k % len(names)]]
-        segs.append(Segment(song.bar_beat(4 * k), m.name, choose_tempo(m, song.spb, 1.0, speed_limit), 1.0, "test"))
+        segs.append(Segment(song.bar_beat(4 * k), m.name, choose_tempo(m, song.spb, 1.0, speed_limit), 1.0, "test",
+                            accent_shift(m, song)))
     return segs
 
 
@@ -204,7 +252,8 @@ def plan_auto(song: Song, moves, speed_limit) -> list[Segment]:
                 name = next((n for n in others + family if n != prev and fits(n)), name)
             m = usable[name]
             tempo = choose_tempo(m, song.spb, amp, speed_limit)
-            segs.append(Segment(song.bar_beat(bar), name, tempo, amp, s["label"] + (" (flow)" if level == "flow" else "")))
+            segs.append(Segment(song.bar_beat(bar), name, tempo, amp, s["label"] + (" (flow)" if level == "flow" else ""),
+                                accent_shift(m, song)))
             prev = name
             bar += max(SLOT_BARS, m.bars_needed(tempo))
             slot += 1
@@ -223,7 +272,7 @@ def plan_from_file(path: Path, song: Song, moves, speed_limit) -> list[Segment]:
         bar_b = song.phase + 4 * round((b - song.phase) / 4)
         amp = float(np.clip(item.get("amp", 1.0), 0.2, 1.0))
         tempo = choose_tempo(m, song.spb, amp, speed_limit, item.get("tempo", "auto"))
-        segs.append(Segment(bar_b, m.name, tempo, amp, item.get("label", "")))
+        segs.append(Segment(bar_b, m.name, tempo, amp, item.get("label", ""), accent_shift(m, song)))
     return sorted(segs, key=lambda s: s.start_beat)
 
 
@@ -235,10 +284,10 @@ def smoothstep(u: float) -> float:
 def target_pose(bp: float, segs: list[Segment], moves: dict[str, Move]) -> np.ndarray:
     k = max(0, int(np.searchsorted([s.start_beat for s in segs], bp, side="right")) - 1)
     s = segs[k]
-    pose = moves[s.move].pose(max(0.0, bp - s.start_beat) * RATES[s.tempo], s.amp)
+    pose = moves[s.move].pose(max(0.0, bp - s.start_beat) * RATES[s.tempo] + s.shift, s.amp)
     if k > 0 and bp - s.start_beat < FADE_BEATS:
         p = segs[k - 1]
-        prev = moves[p.move].pose((bp - p.start_beat) * RATES[p.tempo], p.amp)
+        prev = moves[p.move].pose((bp - p.start_beat) * RATES[p.tempo] + p.shift, p.amp)
         w = smoothstep((bp - s.start_beat) / FADE_BEATS)
         pose = (1 - w) * prev + w * pose
     return pose
@@ -269,9 +318,16 @@ class Edges:
         return w_in * (1.0 - w_out)
 
 
-def command(t: float, song, segs, moves, edges: Edges, home: np.ndarray, offset: float) -> np.ndarray:
-    dance = target_pose(song.beat_pos(t + offset), segs, moves)
-    return home + edges.factor(t + offset) * (dance - home)
+def command(t: float, song, segs, moves, edges: Edges, home: np.ndarray, offset) -> np.ndarray:
+    """Target for every joint. `offset` = seconds each joint looks ahead (scalar or one per joint):
+    slower joints (elbow) get more lead so that all joints of a move arrive at the same moment."""
+    offs = np.broadcast_to(np.asarray(offset, dtype=float), (len(JOINTS),))
+    q = np.empty(len(JOINTS))
+    for o in np.unique(offs):
+        dance = target_pose(song.beat_pos(t + o), segs, moves)
+        pose = home + edges.factor(t + o) * (dance - home)
+        q[offs == o] = pose[offs == o]
+    return q
 
 
 # ----------------------------------------------------------------------------- playback
@@ -381,6 +437,82 @@ def catalog(moves: dict[str, Move], spb: float) -> list[dict]:
     } for m in moves.values()]
 
 
+LABEL_DE = {"intro": "Intro", "verse": "Strophe", "chorus": "Refrain", "breakdown": "Ruhiger Teil", "outro": "Outro"}
+LEVEL_DE = {"low": "ruhig", "mid": "mittel", "high": "energiegeladen"}
+
+
+def bar(frac: float, width: int = 10) -> str:
+    n = int(round(max(0.0, min(1.0, frac)) * width))
+    return "█" * n + "░" * (width - n)
+
+
+def mmss(t: float, decimals: int = 0) -> str:
+    t = round(max(0.0, t), decimals)  # round first, so 59.96 s becomes 1:00 and not 0:60
+    m, s = divmod(t, 60)
+    return f"{int(m)}:{s:0{3 + decimals if decimals else 2}.{decimals}f}"
+
+
+TITLES = {
+    "bounce": "Nicken (aufgenommen)", "sway": "Grosser Schwung (aufgen.)", "bigwave": "Grosse Welle (aufgen.)",
+    "snap": "Schnappen (aufgen.)", "gen_nod": "Nicken", "gen_sway": "Wiegen", "gen_twist": "Handgelenk-Twist",
+    "gen_clap": "Klatschen", "gen_flow": "Fliessen", "gen_float": "Schweben", "gen_look": "Umschauen",
+    "gen_pendulum": "Pendel", "gen_circle": "Kreis", "gen_robot": "Roboter", "gen_disco": "Disco-Zeigen",
+    "gen_hello": "Winken", "gen_pump": "Faust-Pumpen", "gen_chop": "Karate-Hieb", "gen_wave": "Die Welle",
+}
+
+
+def nice_name(m: Move) -> str:
+    """Short human name ('Die Welle', 'Nicken', ...); falls back to the start of the description."""
+    if m.name in TITLES:
+        return TITLES[m.name]
+    d = m.description
+    if d.startswith("Aufgenommen"):
+        d = d.split(":", 1)[-1].strip()
+        if d.startswith("8 Beats") or d.startswith("8 beats"):
+            d = d.split(":", 1)[-1].strip()
+        return d.split(",")[0].split("(")[0].strip()[:28]
+    return d.split(":")[0].split("(")[0].strip()[:28]
+
+
+def section_at(song: Song, t: float) -> dict:
+    return next((s for s in song.sections if s["start"] <= t < s["end"]), song.sections[-1 if t > 1 else 0])
+
+
+def print_song_summary(song: Song, path: Path, song_len: float):
+    a = song.a
+    e = a.get("overall_energy", 0.5)
+    word = "ruhig" if e < 0.35 else "mittel" if e < 0.55 else "lebhaft" if e < 0.7 else "sehr energiegeladen"
+    parts = a.get("overall_energy_parts", {})
+    shares = {lvl: 0.0 for lvl in LEVEL_DE}
+    for s in song.sections:
+        shares[s["energy_level"]] += s["end"] - s["start"]
+    total = sum(shares.values()) or 1.0
+    no_bass = sum(1 for b in song.bars if not b.get("bass", True))
+    acc = "1 + 3" if a.get("accent_phase", 1) == 0 else "2 + 4"
+    line = "═" * 66
+    print(f"\n{line}")
+    print(f"  🎵  {path.name}  ·  {mmss(song_len)} min  ·  {a['tempo_bpm']:.0f} BPM  ·  {len(song.bars)} Takte")
+    print(f"  ⚡  Gesamtenergie   {bar(e, 20)}  {e * 100:3.0f} %  ({word})")
+    if parts:
+        print("      " + "  ·  ".join(f"{k.capitalize()} {v * 100:.0f} %" for k, v in parts.items()))
+    print(f"  📊  Zeitanteile:    " + "  |  ".join(f"{LEVEL_DE[l]} {shares[l] / total * 100:.0f} %" for l in LEVEL_DE))
+    print(f"  🥁  Akzente auf {acc}  ·  Takte ohne Bass: {no_bass}")
+    print("─" * 66)
+    print("  Songstruktur")
+    for s in song.sections:
+        flow = "  ~ ohne Bass: fliessende Moves" if s.get("bass_share", 1) < 0.5 else ""
+        print(f"   {mmss(s['start'])}–{mmss(s['end'])}  {LABEL_DE.get(s['label'], s['label']):13s} "
+              f"{bar(s.get('energy_rel', 0.5))} {s.get('energy_rel', 0.5) * 100:3.0f} %{flow}")
+    print(line)
+
+
+def move_line(t: float, s: "Segment", moves, song) -> str:
+    sec = section_at(song, t + 0.2)
+    label = LABEL_DE.get(sec["label"], sec["label"])
+    return (f"  {mmss(t, 1):>7s}  ▶ {s.move:12s} {nice_name(moves[s.move]):28s} "
+            f"[{label} · {bar(sec.get('energy_rel', 0.5), 8)}]")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("song", type=Path)
@@ -388,25 +520,32 @@ def main():
     p.add_argument("--only", default=None, help="Nur diese Moves, z.B. 'gen_*' oder 'bounce,gen_wave'")
     p.add_argument("--start", type=float, default=0.0, help="Startzeit im Song (s)")
     p.add_argument("--duration", type=float, default=None, help="Laenge des Ausschnitts (s)")
-    p.add_argument("--offset-ms", type=float, default=100.0, help="Arm reagiert so viele ms frueher (gemessen: 100)")
+    p.add_argument("--lead-ms", type=float, default=40.0,
+                   help="Arm kommt so viele ms VOR dem Beat an (wirkt synchroner; 0 = genau auf dem Beat)")
+    p.add_argument("--offset-ms", type=float, default=None,
+                   help="Einheitlicher Vorlauf fuer alle Gelenke statt der gemessenen Werte pro Gelenk (+ --lead-ms)")
     p.add_argument("--audio-latency-ms", type=float, default=0.0,
                    help="Zusaetzliche Lautsprecher-Verzoegerung (z.B. Bluetooth), gemessen mit tools/latency_test.py")
     p.add_argument("--speed-limit", type=float, default=200.0, help="Max. Gelenktempo in Grad/s")
     p.add_argument("--bar-offset", type=int, default=None, help="Taktanfang manuell setzen (0-3)")
     p.add_argument("--p-gain", type=int, default=16, help="Motor-Steifigkeit (lerobot-Standard 16)")
+    p.add_argument("--punch", type=float, default=1.0,
+                   help="Hin-und-her-Moves auf dem Beat 'einrasten' lassen: 0 = weich wie bisher, 1 = voll")
     p.add_argument("--volume", type=float, default=0.8)
     p.add_argument("--catalog", action="store_true", help="Move-Katalog als JSON ausgeben und beenden")
-    p.add_argument("--dry-run", action="store_true", help="Nur planen, simulieren und plotten - Arm bleibt aus")
+    p.add_argument("--dry-run", action="store_true", help="Nur planen und anzeigen - Arm bleibt aus")
+    p.add_argument("--debug", action="store_true", help="Technische Details (Tempo, Simulation, Messbericht)")
     args = p.parse_args()
 
     moves = load_moves(args.only)
+    for m in moves.values():
+        if m.punch:
+            m.loop = punch_loop(m.loop, args.punch)
     print("Analysiere Song ...", file=sys.stderr)
     song = Song(analyze_song.analyze(args.song, args.bar_offset))
     if args.catalog:
         print(json.dumps(catalog(moves, song.spb), indent=1, ensure_ascii=False))
         return
-    print(f"Moves: {', '.join(f'{m.name} ({m.energy})' for m in moves.values())}")
-    print(f"  {song.a['tempo_bpm']:.1f} BPM | {len(song.bars)} Takte | erster Taktanfang {song.a['downbeats'][0]:.2f}s")
 
     if args.plan == "auto":
         segs = plan_auto(song, moves, args.speed_limit)
@@ -419,35 +558,42 @@ def main():
     song_len = len(audio) / sr
     t_start = args.start
     t_end = min(song_len, t_start + args.duration) if args.duration else song_len
-    offset = args.offset_ms / 1000.0
+    # Per-joint look-ahead: each joint's measured lag (or a uniform --offset-ms) plus the visual lead.
+    base = np.full(len(JOINTS), args.offset_ms) if args.offset_ms is not None else JOINT_LAG_MS
+    offset = (base + args.lead_ms) / 1000.0
 
-    print("\nChoreografie:")
-    plan_out = []
-    for k, s in enumerate(segs):
-        a = song.beat_time(s.start_beat)
-        b = song.beat_time(segs[k + 1].start_beat) if k + 1 < len(segs) else song_len
-        plan_out.append({"start": round(a, 2), "move": s.move, "tempo": s.tempo, "amp": s.amp, "label": s.label})
-        if b < t_start or a > t_end:
-            continue
-        v = moves[s.move].peak_speed(song.spb, RATES[s.tempo], s.amp)
-        warn = "  <-- wird gebremst" if v > args.speed_limit else ""
-        print(f"  {a:6.1f}s - {b:6.1f}s  {s.label:9s} {s.move:10s} {s.tempo:4s} {s.amp:4.0%}  Spitze {v:4.0f} Grad/s{warn}")
+    starts = [song.beat_time(s.start_beat) for s in segs]
     out_dir = ROOT / "outputs"
     out_dir.mkdir(exist_ok=True)
     if args.plan in ("auto", "test"):
-        plan_path = out_dir / f"plan_{args.song.stem}.json"
-        plan_path.write_text(json.dumps(plan_out, indent=1))
-        print(f"\nPlan gespeichert (editierbar, mit --plan wieder einlesbar): {plan_path}")
+        plan_out = [{"start": round(a, 2), "move": s.move, "tempo": s.tempo, "amp": s.amp, "label": s.label}
+                    for a, s in zip(starts, segs)]
+        (out_dir / f"plan_{args.song.stem}.json").write_text(json.dumps(plan_out, indent=1))
 
+    print_song_summary(song, args.song, song_len)
     edges = Edges.for_run(song, t_start, t_end)
-    print(f"Arm erhebt sich {edges.in0:.1f}-{edges.in1:.1f}s mit der Musik, kehrt {edges.out0:.1f}-{edges.out1:.1f}s "
-          f"in die Ruhepose zurueck")
-    ts, qs, clipped = simulate(song, segs, moves, t_start, t_end, offset, args.speed_limit, edges, REST_POSE)
-    plot = out_dir / f"dance_{args.song.stem}.png"
-    save_plot(plot, song, segs, ts, qs, t_start, t_end)
-    print(f"Simulation: {len(ts)} Schritte | Tempo-Limit griff (>1 Grad): {dict(zip(JOINTS, clipped.tolist()))}")
-    print(f"Plot: {plot}")
+    first = max([k for k, a in enumerate(starts) if a <= t_start + 1e-6] or [0])  # move running at the start
+    in_window = [(a, s) for k, (a, s) in enumerate(zip(starts, segs)) if k >= first and a < edges.out0]
+    print(f"  💃  Choreografie: {len(in_window)} Moves aus {len({s.move for _, s in in_window})} verschiedenen "
+          f"Bausteinen" + (f"  (Ausschnitt {mmss(t_start)}–{mmss(t_end)})" if args.start or args.duration else ""))
+
+    if args.debug:
+        print("\n[debug] Choreografie mit Tempo:")
+        for k, (a, s) in enumerate(zip(starts, segs)):
+            v = moves[s.move].peak_speed(song.spb, RATES[s.tempo], s.amp)
+            print(f"  {a:6.1f}s  {s.label:18s} {s.move:12s} {s.tempo:4s} {s.amp:4.0%}  Spitze {v:4.0f} Grad/s"
+                  f"{'  <-- gebremst' if v > args.speed_limit else ''}")
+        ts, qs, clipped = simulate(song, segs, moves, t_start, t_end, offset, args.speed_limit, edges, REST_POSE)
+        plot = out_dir / f"dance_{args.song.stem}.png"
+        save_plot(plot, song, segs, ts, qs, t_start, t_end)
+        print(f"[debug] Arm erhebt sich {edges.in0:.1f}-{edges.in1:.1f}s, ruht ab {edges.out1:.1f}s | "
+              f"Tempo-Limit griff: {dict(zip(JOINTS, clipped.tolist()))} | Plot: {plot}")
+        print(f"[debug] Vorlauf pro Gelenk (ms): {dict(zip(JOINTS, np.round(offset * 1000).astype(int).tolist()))}")
     if args.dry_run:
+        print("\n  Ablauf:")
+        for a, s in in_window:
+            print(move_line(max(a, t_start), s, moves, song))
+        print()
         return
 
     from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
@@ -458,18 +604,26 @@ def main():
     home = np.array([obs[f"{j}.pos"] for j in JOINTS])  # the arm's actual rest pose
     q_prev = home.copy()
     log_t, log_cmd, log_meas = [], [], []
+    shown = 0
+    while shown < len(starts) and starts[shown] <= t_start and shown + 1 < len(starts) and starts[shown + 1] <= t_start:
+        shown += 1
+    danced = set()
     try:
         chunk = audio[int(t_start * sr): int(t_end * sr)] * args.volume
         sd.play(chunk, sr)
         # Song time 0 = the moment the first sample is actually HEARD (macOS latency + speaker delay).
         t0 = time.perf_counter() + sd.get_stream().latency + args.audio_latency_ms / 1000.0
         max_step = args.speed_limit / CONTROL_HZ
-        print("\nMusik! Der Arm erhebt sich mit dem Intro. (Ctrl+C zum Stoppen)")
+        print("\n  ▶ Los geht's!  (Ctrl+C zum Stoppen)\n", flush=True)
         while True:
             tick = time.perf_counter()
             t_song = t_start + (tick - t0)
             if t_song >= t_end:
                 break
+            if shown < len(starts) and t_song >= max(starts[shown], t_start) and t_song < edges.out0:
+                print(move_line(t_song, segs[shown], moves, song), flush=True)
+                danced.add(segs[shown].move)
+                shown += 1
             want = command(t_song, song, segs, moves, edges, home, offset)
             q = q_prev + np.clip(want - q_prev, -max_step, max_step)
             robot.send_action({f"{j}.pos": float(v) for j, v in zip(JOINTS, q)})
@@ -479,15 +633,17 @@ def main():
             log_meas.append([obs[f"{j}.pos"] for j in JOINTS])
             q_prev = q
             time.sleep(max(0.0, 1 / CONTROL_HZ - (time.perf_counter() - tick)))
+        print(f"\n  ✔ Fertig: {mmss(t_end - t_start)} min getanzt, {len(danced)} verschiedene Moves.\n")
     except KeyboardInterrupt:
-        print("\nGestoppt.")
+        print("\n  ■ Gestoppt.")
     finally:
         sd.stop()
         if len(log_cmd) > CONTROL_HZ:
             np.savez(out_dir / "dance_log.npz", t=log_t, cmd=log_cmd, meas=log_meas)
-            tracking_report(log_t, log_cmd, log_meas, args.offset_ms, segs, song)
+            if args.debug:
+                tracking_report(log_t, log_cmd, log_meas, float(np.median(offset * 1000) - args.lead_ms), segs, song)
         if np.abs(q_prev - home).max() > 2:  # after Ctrl+C: glide home before releasing the motors
-            print(f"Gleite in {GLIDE_S:.0f}s zurueck in die Ruhepose ...")
+            print(f"  Gleite in {GLIDE_S:.0f}s zurueck in die Ruhepose ...")
             glide(robot, q_prev, home, GLIDE_S)
         robot.disconnect()
 

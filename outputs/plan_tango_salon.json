@@ -1,0 +1,191 @@
+[
+ {
+  "start": 0.86,
+  "move": "gen_circle",
+  "tempo": "full",
+  "amp": 0.94,
+  "label": "verse"
+ },
+ {
+  "start": 4.62,
+  "move": "gen_clap",
+  "tempo": "full",
+  "amp": 0.94,
+  "label": "verse"
+ },
+ {
+  "start": 8.36,
+  "move": "gen_wave",
+  "tempo": "full",
+  "amp": 0.92,
+  "label": "chorus"
+ },
+ {
+  "start": 12.17,
+  "move": "gen_chop",
+  "tempo": "full",
+  "amp": 0.92,
+  "label": "chorus"
+ },
+ {
+  "start": 15.88,
+  "move": "bounce",
+  "tempo": "full",
+  "amp": 0.55,
+  "label": "breakdown"
+ },
+ {
+  "start": 19.62,
+  "move": "gen_nod",
+  "tempo": "full",
+  "amp": 0.55,
+  "label": "breakdown"
+ },
+ {
+  "start": 23.38,
+  "move": "gen_sway",
+  "tempo": "full",
+  "amp": 0.56,
+  "label": "breakdown"
+ },
+ {
+  "start": 27.12,
+  "move": "bounce",
+  "tempo": "full",
+  "amp": 0.56,
+  "label": "breakdown"
+ },
+ {
+  "start": 30.88,
+  "move": "gen_hello",
+  "tempo": "full",
+  "amp": 0.74,
+  "label": "verse"
+ },
+ {
+  "start": 34.62,
+  "move": "gen_pendulum",
+  "tempo": "full",
+  "amp": 0.74,
+  "label": "verse"
+ },
+ {
+  "start": 38.38,
+  "move": "gen_twist",
+  "tempo": "full",
+  "amp": 0.74,
+  "label": "verse"
+ },
+ {
+  "start": 42.12,
+  "move": "sway",
+  "tempo": "full",
+  "amp": 0.74,
+  "label": "verse"
+ },
+ {
+  "start": 45.88,
+  "move": "gen_circle",
+  "tempo": "full",
+  "amp": 0.78,
+  "label": "verse"
+ },
+ {
+  "start": 49.62,
+  "move": "gen_clap",
+  "tempo": "full",
+  "amp": 0.78,
+  "label": "verse"
+ },
+ {
+  "start": 53.36,
+  "move": "gen_hello",
+  "tempo": "full",
+  "amp": 0.73,
+  "label": "verse"
+ },
+ {
+  "start": 57.12,
+  "move": "gen_pendulum",
+  "tempo": "full",
+  "amp": 0.73,
+  "label": "verse"
+ },
+ {
+  "start": 60.86,
+  "move": "gen_twist",
+  "tempo": "full",
+  "amp": 0.8,
+  "label": "verse"
+ },
+ {
+  "start": 64.6,
+  "move": "sway",
+  "tempo": "full",
+  "amp": 0.8,
+  "label": "verse"
+ },
+ {
+  "start": 68.36,
+  "move": "gen_wave",
+  "tempo": "full",
+  "amp": 0.96,
+  "label": "chorus"
+ },
+ {
+  "start": 72.12,
+  "move": "gen_disco",
+  "tempo": "full",
+  "amp": 0.96,
+  "label": "chorus"
+ },
+ {
+  "start": 75.86,
+  "move": "gen_circle",
+  "tempo": "full",
+  "amp": 1.0,
+  "label": "verse"
+ },
+ {
+  "start": 79.62,
+  "move": "gen_clap",
+  "tempo": "full",
+  "amp": 1.0,
+  "label": "verse"
+ },
+ {
+  "start": 83.36,
+  "move": "gen_wave",
+  "tempo": "full",
+  "amp": 0.97,
+  "label": "chorus"
+ },
+ {
+  "start": 87.1,
+  "move": "gen_pump",
+  "tempo": "full",
+  "amp": 0.97,
+  "label": "chorus"
+ },
+ {
+  "start": 90.86,
+  "move": "gen_hello",
+  "tempo": "full",
+  "amp": 0.84,
+  "label": "verse"
+ },
+ {
+  "start": 94.62,
+  "move": "gen_pendulum",
+  "tempo": "full",
+  "amp": 0.84,
+  "label": "verse"
+ },
+ {
+  "start": 98.36,
+  "move": "gen_twist",
+  "tempo": "full",
+  "amp": 0.84,
+  "label": "verse"
+ }
+]

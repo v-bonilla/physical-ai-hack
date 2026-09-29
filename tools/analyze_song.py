@@ -43,6 +43,14 @@ def analyze(path: Path, bar_offset: int | None = None, n_types: int | None = Non
     phase = bar_offset if bar_offset is not None else int(np.argmax([strength[p::4].mean() for p in range(4)]))
     downbeats = beats[phase::4]
     spb = float(np.median(np.diff(beats)))
+    # Where does this song put its accents (snare / clap, 1.5-6 kHz) inside a bar? Percussive moves
+    # (clap, chop) hit twice per bar, so pick the better of beats {1, 3} or {2, 4} (0-based {0, 2} / {1, 3}).
+    S_hi = librosa.feature.melspectrogram(y=y, sr=sr, hop_length=HOP, fmin=1500, fmax=6000, n_mels=24)
+    snare = librosa.onset.onset_strength(S=librosa.power_to_db(S_hi), sr=sr, hop_length=HOP)
+    snare_at = snare[np.minimum(beat_frames, len(snare) - 1)]
+    pos = (np.arange(len(beats)) - phase) % 4
+    accent_strength = [float(snare_at[pos == k].mean()) for k in range(4)]
+    accent_phase = 0 if accent_strength[0] + accent_strength[2] >= accent_strength[1] + accent_strength[3] else 1
     bar_edges = np.append(downbeats, min(duration, downbeats[-1] + 4 * spb))
 
     # Frame features
@@ -78,6 +86,20 @@ def analyze(path: Path, bar_offset: int | None = None, n_types: int | None = Non
         b["energy"] = round(float(e), 3)
         b["bass_db_rel"] = round(float(br), 1)
         b["bass"] = bool(br > -6)
+
+    # Overall energy of the song (absolute, comparable between songs) - a heuristic index from four parts.
+    harm, perc = librosa.decompose.hpss(stft)
+    playing = rms > 0.1 * rms.max()
+    loud_dbfs = float(20 * np.log10(np.sqrt(np.mean(rms[playing] ** 2)) + 1e-12))
+    onset_rate = len(librosa.onset.onset_detect(onset_envelope=onset, sr=sr, hop_length=HOP)) / duration
+    bpm = float(np.atleast_1d(tempo)[0])
+    parts = {
+        "lautstaerke": float(np.clip((loud_dbfs + 30) / 22, 0, 1)),  # -30 dBFS -> 0, -8 dBFS -> 1
+        "tempo": float(np.clip((bpm - 70) / 80, 0, 1)),  # 70 BPM -> 0, 150 BPM -> 1
+        "rhythmus": float(np.clip((onset_rate - 1) / 5, 0, 1)),  # 1 -> 6 note onsets per second
+        "perkussiv": float(np.clip((perc.sum() / (harm.sum() + perc.sum()) - 0.1) / 0.4, 0, 1)),
+    }
+    overall = 0.3 * parts["lautstaerke"] + 0.25 * parts["tempo"] + 0.25 * parts["rhythmus"] + 0.2 * parts["perkussiv"]
 
     # Fade-in / fade-out from a 0.5 s smoothed loudness curve (fades can be shorter than a bar).
     env = uniform_filter1d(librosa.amplitude_to_db(rms, ref=np.max), size=max(1, int(0.5 * sr / HOP)))
@@ -152,6 +174,11 @@ def analyze(path: Path, bar_offset: int | None = None, n_types: int | None = Non
         "tempo_bpm": round(float(np.atleast_1d(tempo)[0]), 2),
         "seconds_per_beat": round(spb, 4),
         "downbeat_phase": phase,
+        # Snare/clap strength on beat 1-4 of the bar, and where 2x-per-bar hits belong: 0 = on 1+3, 1 = on 2+4.
+        "overall_energy": round(float(overall), 3),
+        "overall_energy_parts": {k: round(v, 2) for k, v in parts.items()},
+        "accent_strength": [round(a, 3) for a in accent_strength],
+        "accent_phase": accent_phase,
         # Song edges (seconds): audible -> full loudness ... last full loudness -> practically silent.
         "music_start": round(music_start, 3),
         "fade_in_end": round(fade_in_end, 3),
@@ -206,6 +233,9 @@ def main():
               f"Energie {s['energy_rel']:.2f} relativ ({s['energy_level']})  Bass in {s['bass_share']:.0%} der Takte")
     nb = [b for b in result["bars"] if not b["bass"]]
     print(f"Takte ohne Bass: {len(nb)} ({', '.join(f'{b['start']:.0f}s' for b in nb)})")
+    acc = result["accent_strength"]
+    print(f"Snare/Clap-Staerke auf Schlag 1/2/3/4: {', '.join(f'{a:.2f}' for a in acc)} -> Akzent-Moves treffen "
+          f"{'1 und 3' if result['accent_phase'] == 0 else '2 und 4'}")
     print(f"Musik hoerbar ab {result['music_start']:.1f}s, volle Lautstaerke ab {result['fade_in_end']:.1f}s | "
           f"Ausblenden ab {result['fade_out_start']:.1f}s, still ab {result['music_end']:.1f}s")
     print(f"-> {out}\n-> {out.with_suffix('.png')}")
