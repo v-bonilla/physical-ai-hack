@@ -2073,5 +2073,7 @@
   ]
  ],
  "beat_shift": 0.398,
- "method": "mittelwert"
+ "method": "mittelwert",
+ "energy": "low",
+ "description": "Aufgenommen: Nicken, Ellbogen hoch/runter mit gegenlaeufigem Handgelenk, Arm tief."
 }

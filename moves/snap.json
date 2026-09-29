@@ -5153,5 +5153,7 @@
     48.27
    ]
   ]
- ]
+ ],
+ "energy": "off",
+ "description": "Aufgenommen: Greifer klatscht, Handgelenk dreht. AUS der Auto-Choreografie genommen: am Arm gemessen Ellbogen bis 231 ms zu spaet, nur 70 % Hub (zu schnell fuer die Servos)."
 }
