@@ -9,3 +9,6 @@ __pycache__/
 songs/
 *.analysis.json
 *.csv
+
+# dancebot smoke reports
+smoke-report-*.txt

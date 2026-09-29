@@ -10,11 +10,9 @@ dependencies = [
     "soundfile",
     "sounddevice",
     "librosa",
-]
-
-[project.optional-dependencies]
-robot = ["lerobot[feetech]"]
-beats = [
+    # robot
+    "lerobot[feetech]",
+    # Beat This! neural beat tracker
     "beat-this @ https://github.com/CPJKU/beat_this/archive/main.zip",
     "rotary-embedding-torch",
     "torch",
@@ -22,7 +20,12 @@ beats = [
     "einops",
     "soxr",
 ]
+
+[dependency-groups]
 dev = ["pytest"]
+
+[tool.uv]
+default-groups = ["dev"]
 
 [project.scripts]
 dancebot = "dancebot.cli:main"

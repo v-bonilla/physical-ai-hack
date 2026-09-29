@@ -34,7 +34,7 @@ def beat_this_available() -> bool:
 
 
 def beats_beat_this(path: str | Path) -> tuple[np.ndarray, np.ndarray]:
-    from beat_this.inference import File2Beats  # optional extra "beats"
+    from beat_this.inference import File2Beats  # lazy: heavy torch import
 
     device = "cpu"
     try:

@@ -7,7 +7,7 @@ import math
 import os
 import sys
 
-from .choreo import MAX_SWAY
+from .choreo import MAX_SCALE, MAX_SWAY, MOVES
 from .perform import DEFAULT_MARGIN, DEFAULT_MAX_SPEED
 from .robot import DEFAULT_ROBOT_ID, CalibrationError
 
@@ -26,6 +26,13 @@ def _positive(s: str) -> float:
     return v
 
 
+def _scale(s: str) -> float:
+    v = _positive(s)
+    if v > MAX_SCALE:
+        raise argparse.ArgumentTypeError(f"must be <= {MAX_SCALE:g}")
+    return v
+
+
 def _non_negative(s: str) -> float:
     v = _finite(s)
     if v < 0:
@@ -36,7 +43,7 @@ def _non_negative(s: str) -> float:
 def cmd_dance(args) -> None:
     from .analyze import analyze, summarize
     from .audio import NullPlayer, Player, load_audio
-    from .choreo import sway
+    from .choreo import make_move
     from .perform import Performer
     from .robot import FakeArm, LeRobotArm
 
@@ -46,7 +53,7 @@ def cmd_dance(args) -> None:
     print(summarize(analysis))
     if args.amplitude > MAX_SWAY:
         print(f"amplitude clamped to {MAX_SWAY:g}", file=sys.stderr)
-    choreo = sway(args.amplitude)
+    choreo = make_move(args.move, args.scale, args.amplitude)
 
     if args.dry_run:
         robot = FakeArm()
@@ -67,7 +74,7 @@ def cmd_dance(args) -> None:
 
     perf = Performer(robot, player, choreo, analysis["beats"], latency_s=args.latency_ms / 1000.0,
                      margin=args.margin, max_speed=args.max_speed, simulate=args.simulate, hud=not args.quiet,
-                     beat_mult=args.beat_mult)
+                     beat_mult=args.beat_mult, downbeats=analysis["downbeats"], stop_after_s=args.seconds)
     try:
         res = perf.run(csv_path=args.csv)
         print(f"done: {res['ticks']} commands, interrupted={res['interrupted']}, "
@@ -78,6 +85,12 @@ def cmd_dance(args) -> None:
         if not args.dry_run and perf.last_cmd is not None:  # only once the arm was connected and read
             print("torque released, arm is limp" if args.release else
                   "torque is still ON: the arm holds its start pose until power is cut")
+
+
+def cmd_smoke(args) -> None:
+    from .smoke import run_smoke
+
+    sys.exit(run_smoke(args))
 
 
 def cmd_ports(args) -> None:
@@ -91,8 +104,12 @@ def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="dancebot", description="Make an SO-101 dance to any song.")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("dance", help="analyze beats and sway the arm to the song")
+    p = sub.add_parser("dance", help="analyze beats and dance the arm to the song")
     p.add_argument("song")
+    p.add_argument("--move", choices=MOVES, default="groove")
+    p.add_argument("--scale", type=_scale, default=1.0,
+                   help=f"multiply the move's offsets (0 < S <= {MAX_SCALE:g}); per-joint caps still apply")
+    p.add_argument("--seconds", type=_positive, help="stop dancing after this many seconds")
     p.add_argument("--port", help="follower serial port (env DANCEBOT_FOLLOWER_PORT)")
     p.add_argument("--robot-id", help="calibration id (env DANCEBOT_FOLLOWER_ID, default dancer)")
     p.add_argument("--amplitude", type=_finite, default=15.0, help=f"shoulder_pan sway, max {MAX_SWAY:g}")
@@ -114,6 +131,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(fn=cmd_dance)
 
     sub.add_parser("ports", help="list serial ports").set_defaults(fn=cmd_ports)
+
+    p = sub.add_parser("smoke", help="check everything on this machine, ending with a short real dance")
+    p.add_argument("--song", help="use this song instead of the synthesized smoke groove")
+    p.add_argument("--port", help="follower serial port (env DANCEBOT_FOLLOWER_PORT, else auto-detect)")
+    p.add_argument("--robot-id", help="calibration id (env DANCEBOT_FOLLOWER_ID, default dancer)")
+    p.add_argument("--seconds", type=_positive, default=20.0, help="length of the final dance (default 20)")
+    p.add_argument("--no-robot", action="store_true", help="skip the arm; the dance runs on a fake arm")
+    p.add_argument("--no-audio", action="store_true", help="skip audio checks and play silently")
+    p.add_argument("--latency-ms", type=_finite, default=float(os.environ.get("DANCEBOT_LATENCY_MS", 80)))
+    p.set_defaults(fn=cmd_smoke)
     return ap
 
 

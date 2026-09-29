@@ -9,7 +9,7 @@ import numpy as np
 
 from .choreo import JOINTS
 
-ROBOT_EXTRA_HINT = "LeRobot is not installed. Install the robot extra: uv sync --extra robot"
+ROBOT_EXTRA_HINT = "LeRobot is not installed. Run: uv sync"
 
 # lerobot 0.6.x uses so_follower; older releases used per-model module names
 FOLLOWER_PATHS = [
@@ -57,6 +57,9 @@ def from_obs(obs: dict[str, Any]) -> np.ndarray:
 
 
 class RobotIO:
+    def check_calibration_file(self) -> str:
+        return "not applicable"
+
     def connect(self) -> None: ...
     def disconnect(self) -> None: ...
     def read_pose(self) -> np.ndarray: raise NotImplementedError
@@ -70,11 +73,16 @@ class LeRobotArm(RobotIO):
         # keeping torque on at disconnect holds the start pose instead of dropping the arm
         self.robot = Follower(FollowerConfig(port=port, id=robot_id, disable_torque_on_disconnect=release))
 
-    def connect(self) -> None:
-        # never let lerobot calibrate interactively: it disables torque and rewrites homing
+    def check_calibration_file(self) -> str:
+        """Raise CalibrationError unless the calibration file exists; returns its path. No bus access."""
         fpath = self.robot.calibration_fpath
         if not fpath.is_file():
             raise CalibrationError(calibration_help(self.port, self.robot_id, fpath, "no calibration file"))
+        return str(fpath)
+
+    def connect(self) -> None:
+        # never let lerobot calibrate interactively: it disables torque and rewrites homing
+        fpath = self.check_calibration_file()
         self.robot.connect(calibrate=False)
         if not self.robot.is_calibrated:
             self.robot.bus.disconnect(disable_torque=False)  # never cut torque here, even with --release

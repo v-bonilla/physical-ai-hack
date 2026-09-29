@@ -80,10 +80,24 @@ def smoothstep(x: float) -> float:
 
 
 def pose_at(choreo: Choreo, beat_phase: float) -> np.ndarray:
-    """Pose at a beat phase, looping modulo length_beats. Keyframes are hit exactly on their phase."""
+    """Pose at a beat phase, looping modulo length_beats. Keyframes are hit exactly on their phase.
+
+    A NaN sample means "no keyframe for this joint here": each joint then eases between its own
+    keyframes, so one joint's half-beat keys do not stall another joint mid-swing.
+    """
+    poses = choreo.poses
+    if np.isnan(poses).any():
+        out = np.empty(poses.shape[1])
+        for j in range(poses.shape[1]):
+            keep = ~np.isnan(poses[:, j])
+            out[j] = _interp(choreo.phases[keep], poses[keep, j : j + 1], choreo, beat_phase)[0]
+        return out
+    return _interp(choreo.phases, poses, choreo, beat_phase)
+
+
+def _interp(ph: np.ndarray, poses: np.ndarray, choreo: Choreo, beat_phase: float) -> np.ndarray:
     L = float(choreo.length_beats)
     p = float(beat_phase) % L
-    ph, poses = choreo.phases, choreo.poses
     n = len(ph)
     if n == 1:
         return poses[0].copy()
@@ -111,6 +125,48 @@ def sway(amplitude: float = 15.0) -> Choreo:
     return Choreo(name="sway", length_beats=2, recorded_bpm=100.0, samples=offsets, relative=True)
 
 
+def groove() -> Choreo:
+    """Built-in 2-bar move, offsets from the start pose (degrees; gripper in its 0..100 units).
+
+    Bar 1 "sway and nod": pan +12/-12 on beats, wrist_flex -10 on beats and 0 on half beats.
+    Bar 2 "twist and clap": wrist_roll +20/-20 on beats, gripper opens +25 on 4.5 and 6.5, shut on beats.
+    shoulder_lift and elbow_flex never move (gravity-loaded, table risk).
+    """
+    n = np.nan
+    #        phase  pan  lift elbow wflex wroll grip
+    rows = [
+        [0.0,  12,  0,   0,   -10,   0,    0],
+        [0.5,   n,  n,   n,     0,   n,    n],
+        [1.0, -12,  n,   n,   -10,   0,    0],
+        [1.5,   n,  n,   n,     0,   n,    n],
+        [2.0,  12,  n,   n,   -10,   0,    0],
+        [2.5,   n,  n,   n,     0,   n,    n],
+        [3.0, -12,  n,   n,   -10,   0,    0],
+        [3.5,   n,  n,   n,     0,   n,    n],
+        [4.0,   0,  n,   n,     0,  20,    0],
+        [4.5,   n,  n,   n,     n,   n,   25],
+        [5.0,   0,  n,   n,     0, -20,    0],
+        [6.0,   0,  n,   n,     0,  20,    0],
+        [6.5,   n,  n,   n,     n,   n,   25],
+        [7.0,   0,  n,   n,     0, -20,    0],
+    ]
+    return Choreo(name="groove", length_beats=8, recorded_bpm=110.0, samples=np.array(rows, float), relative=True)
+
+
+# absolute caps on any move's offsets after --scale
+OFFSET_CAPS = np.array([30.0, 0.0, 0.0, 20.0, 35.0, 40.0])
+
+
+def scaled(choreo: Choreo, scale: float) -> Choreo:
+    """Multiply a relative move's offsets by scale, then cap them per joint; lift and elbow stay 0."""
+    s = choreo.samples.copy()
+    s[:, 1:] = np.clip(s[:, 1:] * scale, -OFFSET_CAPS, OFFSET_CAPS)
+    s[:, 1:] = np.where(np.isnan(choreo.samples[:, 1:]), np.nan, s[:, 1:])
+    return Choreo(name=choreo.name, length_beats=choreo.length_beats, recorded_bpm=choreo.recorded_bpm,
+                  samples=s, mode=choreo.mode, energy=choreo.energy, relative=choreo.relative,
+                  tags=list(choreo.tags), joints=list(choreo.joints))
+
+
 def save_choreo(choreo: Choreo, path: str | Path) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -120,3 +176,15 @@ def save_choreo(choreo: Choreo, path: str | Path) -> Path:
 
 def load_choreo(path: str | Path) -> Choreo:
     return Choreo.from_dict(json.loads(Path(path).read_text()))
+
+
+MOVES = ("groove", "sway")
+MAX_SCALE = 1.5
+
+
+def make_move(name: str = "groove", scale: float = 1.0, amplitude: float = 15.0) -> Choreo:
+    if name not in MOVES:
+        raise ValueError(f"unknown move {name!r}; choose from {MOVES}")
+    if not (0 < scale <= MAX_SCALE):
+        raise ValueError(f"scale must be in (0, {MAX_SCALE}]")
+    return scaled(groove() if name == "groove" else sway(amplitude), scale)

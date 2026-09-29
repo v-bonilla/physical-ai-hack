@@ -1,27 +1,58 @@
 # dancebot
 
-An SO-101 arm sways to any song, locked to the beat. Plan: `docs/PLAN.md`. Full design: `docs/DESIGN.md`.
+An SO-101 arm dances to any song, locked to the beat. Plan: `docs/PLAN.md`. Full design: `docs/DESIGN.md`.
 
-The current build ships one built-in move: `shoulder_pan` swings to `start + A` on even beats and
-`start - A` on odd beats, eased so it lands on each beat. It is relative to the pose read at
-connect, so calibration offsets do not matter. All other joints hold.
+## Try it on the Mac
 
-## Setup (Apple Silicon Mac)
+Plug in the follower arm (power and USB), stand it upright and clear of the table, then:
 
 ```sh
-uv sync --extra robot --extra beats --extra dev   # lerobot, Beat This!, pytest
+uv run dancebot smoke
+```
+
+On a fresh clone the first run installs everything (torch, lerobot, Beat This!) and downloads the
+Beat This! checkpoint (77 MB), which takes a few minutes depending on network. Later runs take
+about 40 s.
+
+It synthesizes a 110 BPM test groove, runs both beat trackers, plays 4 clicks, finds the arm,
+checks calibration, nudges each moving joint 3 degrees (after a 5 s countdown, Ctrl+C aborts),
+then dances for 20 s. It prints PASS / WARN / FAIL / SKIP per stage, the exact `dance` command to
+use next, and saves everything to `smoke-report-<time>.txt` to paste back. Flags: `--song PATH`,
+`--port P`, `--robot-id ID` (default `dancer`), `--seconds N`, `--no-robot`, `--no-audio`.
+
+| FAIL | Do this |
+|---|---|
+| env | `uv sync`, then rerun |
+| beats/beat_this | needs network once for the checkpoint; librosa still works |
+| beats (both) | report it; use `--beat-mult` from the WARN line if shown |
+| audio | check the default output device in macOS Sound settings; wired speaker |
+| port (several) | unplug the leader arm, or pass `--port` |
+| calibration | run the printed `lerobot-calibrate` command, or pass the `--robot-id` you calibrated with |
+| connect | check power and USB; close other programs using the port |
+| joint/... | that servo did not follow: check its cable and power; the dance is skipped |
+
+## Moves
+
+- `groove` (default): 2 bars. Bar 1 sways the pan (+-12) and nods the wrist on every beat. Bar 2
+  twists the wrist roll (+-20) and claps the gripper: it opens on the "and" of 1 and 3 and snaps
+  shut on 2 and 4, with the snare. Shoulder lift and elbow never move. Phase 0 lands on a detected
+  downbeat. Full table: `docs/PLAN.md`.
+- `sway`: pan +A on even beats, -A on odd beats (`--amplitude`, max 30).
+- `--scale S` (0 < S <= 1.5) multiplies any move; offsets stay capped at pan 30, wrist flex 20,
+  wrist roll 35, gripper 40. The gripper also stays within 0..100.
+
+Moves are offsets from the pose read at connect, so calibration offsets do not matter. Units are
+degrees (lerobot defaults to `use_degrees=True`); the gripper uses its 0..100 range.
+
+## Setup
+
+```sh
+uv sync          # everything, including lerobot, Beat This! and pytest
 uv run pytest
+uv run python -c "from beat_this.inference import File2Beats; File2Beats('final0')"   # pre-download checkpoint
 ```
 
-Core (librosa beats, dry run) needs no extras. Beat This! downloads its checkpoint (77 MB) on
-first use and falls back to librosa if unavailable. Download it before relying on venue network:
-
-```sh
-uv run python -c "from beat_this.inference import File2Beats; File2Beats('final0')"
-```
-
-Units are degrees: lerobot defaults to `use_degrees=True`, so `--amplitude 15` means 15 degrees
-of shoulder pan each side.
+Beat This! falls back to librosa if unavailable.
 
 ## Arm
 
@@ -38,7 +69,8 @@ uv run dancebot ports                        # list serial ports
 ```sh
 uv run dancebot dance song.mp3 --dry-run            # fake arm, real audio, HUD
 uv run dancebot dance song.mp3 --simulate --csv poses.csv   # no audio, faster than real time
-uv run dancebot dance song.mp3 --port /dev/tty.usbmodemXXXX --robot-id dancer --amplitude 8   # real arm (A max 30)
+uv run dancebot dance song.mp3 --port /dev/tty.usbmodemXXXX --robot-id dancer --seconds 30   # real arm, groove
+uv run dancebot dance song.mp3 --port /dev/tty.usbmodemXXXX --robot-id dancer --move sway --amplitude 8
 ```
 
 - Start: eases from the current pose to the first target over 2 s, then starts audio.
@@ -57,5 +89,5 @@ uv run dancebot dance song.mp3 --port /dev/tty.usbmodemXXXX --robot-id dancer --
 
 Commands lead the audio by `--latency-ms` (default 80, env `DANCEBOT_LATENCY_MS`). While dancing,
 press `]` for +10 ms and `[` for -10 ms; the HUD shows the current value and the final value is
-printed at exit. Tune until the swing extremes land on the kick. Use a wired speaker; Bluetooth
+printed at exit. Tune until the moves land on the kick. Use a wired speaker; Bluetooth
 adds 150 to 300 ms.

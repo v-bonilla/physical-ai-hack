@@ -97,13 +97,19 @@ class Performer:
 
     def __init__(self, robot, player, choreo: Choreo, beats: list[float], latency_s: float = 0.0,
                  margin: float = DEFAULT_MARGIN, max_speed: float = DEFAULT_MAX_SPEED, hz: int = HZ,
-                 simulate: bool = False, hud: bool = True, beat_mult: float = 1.0):
+                 simulate: bool = False, hud: bool = True, beat_mult: float = 1.0,
+                 downbeats: list[float] | None = None, stop_after_s: float | None = None):
         self.robot = robot
         self.player = player
         self.choreo = choreo
         self.clock = BeatClock(scale_beats(beats, beat_mult))
         self.n_beats = len(self.clock.beats)
         self.tempo_bpm = 60.0 / self.clock.ibi
+        self.beats_per_bar = max(1, int(round(4 * beat_mult)))
+        # choreo phase 0 lands on the first detected downbeat (beat index in the scaled clock)
+        self.d0 = int(round(self.clock.beat_at(downbeats[0]))) if downbeats is not None and len(downbeats) else 0
+        self.d0 = min(max(self.d0, 0), self.n_beats - 1)
+        self.stop_after_s = stop_after_s
         self.latency_s = latency_s
         self.margin = margin
         self.max_step = max_speed / hz
@@ -120,15 +126,24 @@ class Performer:
     def set_start_pose(self, start: np.ndarray) -> None:
         """Relative moves are offsets from start; clamps are the move's range plus margin."""
         start = np.asarray(start, dtype=float)
+        self.start = start.copy()
         self.base = start.copy() if self.choreo.relative else np.zeros_like(start)
-        poses = self.choreo.poses + self.base
+        poses = np.nan_to_num(self.choreo.poses, nan=0.0) + self.base
         self.lo = np.minimum(poses.min(axis=0), start) - self.margin
         self.hi = np.maximum(poses.max(axis=0), start) + self.margin
+        g = JOINTS.index("gripper")  # absolute gripper range is 0..100 (unless it starts outside)
+        self.lo[g] = max(self.lo[g], min(0.0, start[g]))
+        self.hi[g] = min(self.hi[g], max(100.0, start[g]))
 
     def target_at(self, t: float) -> tuple[np.ndarray, float]:
         b = self.clock.beat_at(t)
-        # hold the first pose before the first beat and the last pose after the last beat
-        phase = min(max(b, 0.0), float(self.n_beats - 1))
+        if b < self.d0:
+            # hold the start pose before the first downbeat, easing into phase 0 over the beat before it
+            w = smoothstep(b - (self.d0 - 1))
+            first = self.base + pose_at(self.choreo, 0.0)
+            return self.start + w * (first - self.start), b
+        # hold the last pose after the last beat
+        phase = min(b, float(self.n_beats - 1)) - self.d0
         return self.base + pose_at(self.choreo, phase), b
 
     def safe(self, target: np.ndarray) -> np.ndarray:
@@ -166,8 +181,12 @@ class Performer:
             t_next = self.tick_wait(t_next + self.dt)
 
     def hud_line(self, b: float) -> str:
-        bar, beat = divmod(int(np.floor(b)), 4)
-        return (f"\r t={self.song_t:6.2f}s  bar {bar + 1:3d}.{beat + 1}  {self.tempo_bpm:5.1f} BPM  "
+        if b < self.d0:
+            pos = "  --.-"
+        else:
+            bar, beat = divmod(int(np.floor(b)) - self.d0, self.beats_per_bar)
+            pos = f"{bar + 1:4d}.{beat + 1}"
+        return (f"\r t={self.song_t:6.2f}s  bar {pos}  {self.tempo_bpm:5.1f} BPM  "
                 f"{self.choreo.name}  lat={self.latency_s * 1000:+4.0f}ms  ([ ] nudge)  ")
 
     def ease_back(self, start_pose: np.ndarray) -> None:
@@ -184,36 +203,46 @@ class Performer:
         with _signals({s: _raise_interrupt for s in (signal.SIGTERM, getattr(signal, "SIGHUP", None)) if s}):
             return self._run(csv_path)
 
-    def _run(self, csv_path: str | Path | None) -> dict:
+    @contextmanager
+    def session(self):
+        """Connect, read the start pose, and on ANY exit ease back to it before disconnecting.
+
+        Yields the start pose. A KeyboardInterrupt inside is absorbed and recorded in self.interrupted.
+        """
+        self.interrupted = False
         self.robot.connect()
-        interrupted = False
         try:
             start_pose = self.robot.read_pose()
+            if not np.all(np.isfinite(start_pose)):
+                raise RuntimeError(f"non-finite start pose {start_pose}; not moving")
             self.set_start_pose(start_pose)
             self.last_cmd = start_pose.copy()
+            try:
+                yield start_pose
+            except KeyboardInterrupt:
+                self.interrupted = True
+            finally:
+                # motion first, terminal output last: output can raise EIO after SIGHUP
+                self.ease_back(start_pose)
+                if self.hud:
+                    _say(sys.stdout, "\n")
+                _say(sys.stderr, "eased back to start pose\n")
+        finally:
+            self.robot.disconnect()
+
+    def _run(self, csv_path: str | Path | None) -> dict:
+        with self.session() as start_pose:
             try:
                 self.player.open()  # a bad audio device fails here, before any motion
                 first, _ = self.target_at(self.latency_s)
                 self.ease(start_pose, first)
                 self.player.start()
                 self._dance_loop()
-            except KeyboardInterrupt:
-                interrupted = True
             finally:
-                # runs on any exception too; the outer finally still disconnects if this raises
-                # motion first, terminal output last: output can raise EIO after SIGHUP
-                try:
-                    self.player.stop()
-                finally:
-                    self.ease_back(start_pose)
-                    if self.hud:
-                        _say(sys.stdout, "\n")
-                    _say(sys.stderr, "eased back to start pose\n")
-        finally:
-            self.robot.disconnect()
+                self.player.stop()
         if csv_path:
             self.dump_csv(csv_path)
-        return {"interrupted": interrupted, "ticks": len(self.log), "start_pose": start_pose,
+        return {"interrupted": self.interrupted, "ticks": len(self.log), "start_pose": start_pose,
                 "final_cmd": self.last_cmd, "latency_s": self.latency_s}
 
     def _dance_loop(self) -> None:
@@ -221,6 +250,8 @@ class Performer:
             t_next = time.perf_counter()
             last_hud = -1.0
             while not self.player.done:
+                if self.stop_after_s is not None and self.song_t >= self.stop_after_s:
+                    break
                 for ch in keys():
                     if ch == "[":
                         self.latency_s -= LATENCY_STEP

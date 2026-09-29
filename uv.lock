@@ -750,51 +750,48 @@ name = "dancebot"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "beat-this" },
+    { name = "einops" },
+    { name = "lerobot", version = "0.4.4", source = { registry = "https://pypi.org/simple" }, extra = ["feetech"], marker = "python_full_version < '3.12'" },
+    { name = "lerobot", version = "0.6.1", source = { registry = "https://pypi.org/simple" }, extra = ["feetech"], marker = "python_full_version >= '3.12'" },
     { name = "librosa", version = "0.11.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "librosa", version = "1.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "numpy" },
+    { name = "rotary-embedding-torch" },
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
     { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "sounddevice" },
     { name = "soundfile" },
-]
-
-[package.optional-dependencies]
-beats = [
-    { name = "beat-this" },
-    { name = "einops" },
-    { name = "rotary-embedding-torch" },
     { name = "soxr" },
     { name = "torch", version = "2.10.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "torchaudio" },
 ]
+
+[package.dev-dependencies]
 dev = [
     { name = "pytest" },
-]
-robot = [
-    { name = "lerobot", version = "0.4.4", source = { registry = "https://pypi.org/simple" }, extra = ["feetech"], marker = "python_full_version < '3.12'" },
-    { name = "lerobot", version = "0.6.1", source = { registry = "https://pypi.org/simple" }, extra = ["feetech"], marker = "python_full_version >= '3.12'" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "beat-this", marker = "extra == 'beats'", url = "https://github.com/CPJKU/beat_this/archive/main.zip" },
-    { name = "einops", marker = "extra == 'beats'" },
-    { name = "lerobot", extras = ["feetech"], marker = "extra == 'robot'" },
+    { name = "beat-this", url = "https://github.com/CPJKU/beat_this/archive/main.zip" },
+    { name = "einops" },
+    { name = "lerobot", extras = ["feetech"] },
     { name = "librosa" },
     { name = "numpy" },
-    { name = "pytest", marker = "extra == 'dev'" },
-    { name = "rotary-embedding-torch", marker = "extra == 'beats'" },
+    { name = "rotary-embedding-torch" },
     { name = "scipy" },
     { name = "sounddevice" },
     { name = "soundfile" },
-    { name = "soxr", marker = "extra == 'beats'" },
-    { name = "torch", marker = "extra == 'beats'" },
-    { name = "torchaudio", marker = "extra == 'beats'" },
+    { name = "soxr" },
+    { name = "torch" },
+    { name = "torchaudio" },
 ]
-provides-extras = ["robot", "beats", "dev"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest" }]
 
 [[package]]
 name = "datasets"
