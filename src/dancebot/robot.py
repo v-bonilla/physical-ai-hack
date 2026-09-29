@@ -77,7 +77,7 @@ class LeRobotArm(RobotIO):
             raise CalibrationError(calibration_help(self.port, self.robot_id, fpath, "no calibration file"))
         self.robot.connect(calibrate=False)
         if not self.robot.is_calibrated:
-            self.robot.disconnect()
+            self.robot.bus.disconnect(disable_torque=False)  # never cut torque here, even with --release
             raise CalibrationError(calibration_help(self.port, self.robot_id, fpath,
                                                     "motor calibration does not match the file"))
 

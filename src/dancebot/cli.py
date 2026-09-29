@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import sys
 
@@ -11,15 +12,22 @@ from .perform import DEFAULT_MARGIN, DEFAULT_MAX_SPEED
 from .robot import DEFAULT_ROBOT_ID, CalibrationError
 
 
-def _positive(s: str) -> float:
+def _finite(s: str) -> float:
     v = float(s)
+    if not math.isfinite(v):
+        raise argparse.ArgumentTypeError("must be a finite number")
+    return v
+
+
+def _positive(s: str) -> float:
+    v = _finite(s)
     if v <= 0:
         raise argparse.ArgumentTypeError("must be > 0")
     return v
 
 
 def _non_negative(s: str) -> float:
-    v = float(s)
+    v = _finite(s)
     if v < 0:
         raise argparse.ArgumentTypeError("must be >= 0")
     return v
@@ -87,8 +95,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("song")
     p.add_argument("--port", help="follower serial port (env DANCEBOT_FOLLOWER_PORT)")
     p.add_argument("--robot-id", help="calibration id (env DANCEBOT_FOLLOWER_ID, default dancer)")
-    p.add_argument("--amplitude", type=float, default=15.0, help=f"shoulder_pan sway, max {MAX_SWAY:g}")
-    p.add_argument("--latency-ms", type=float, default=float(os.environ.get("DANCEBOT_LATENCY_MS", 80)),
+    p.add_argument("--amplitude", type=_finite, default=15.0, help=f"shoulder_pan sway, max {MAX_SWAY:g}")
+    p.add_argument("--latency-ms", type=_finite, default=float(os.environ.get("DANCEBOT_LATENCY_MS", 80)),
                    help="commands lead audio by this much (default 80, env DANCEBOT_LATENCY_MS)")
     p.add_argument("--max-speed", type=_positive, default=DEFAULT_MAX_SPEED, help="joint units per second")
     p.add_argument("--margin", type=_non_negative, default=DEFAULT_MARGIN, help="clamp margin beyond the move's range")

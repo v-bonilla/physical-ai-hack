@@ -23,6 +23,22 @@ DEFAULT_MARGIN = 5.0
 DEFAULT_MAX_SPEED = 180.0  # joint units per second (lerobot default units are degrees)
 LATENCY_STEP = 0.010
 
+try:
+    import termios
+
+    TERM_ERRORS: tuple = (OSError, termios.error)
+except ImportError:
+    TERM_ERRORS = (OSError,)
+
+
+def _say(stream, text: str) -> None:
+    """Terminal output that never raises: a closed terminal (SIGHUP) must not block the ease-back."""
+    try:
+        stream.write(text)
+        stream.flush()
+    except TERM_ERRORS:
+        pass
+
 
 def _raise_interrupt(signum, frame):
     raise KeyboardInterrupt
@@ -70,7 +86,10 @@ def key_reader():
 
         yield read
     finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        try:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        except TERM_ERRORS:
+            pass
 
 
 class Performer:
@@ -182,13 +201,14 @@ class Performer:
                 interrupted = True
             finally:
                 # runs on any exception too; the outer finally still disconnects if this raises
+                # motion first, terminal output last: output can raise EIO after SIGHUP
                 try:
                     self.player.stop()
                 finally:
-                    if self.hud:
-                        sys.stdout.write("\n")
-                    print("easing back to start pose", file=sys.stderr)
                     self.ease_back(start_pose)
+                    if self.hud:
+                        _say(sys.stdout, "\n")
+                    _say(sys.stderr, "eased back to start pose\n")
         finally:
             self.robot.disconnect()
         if csv_path:
@@ -210,8 +230,7 @@ class Performer:
                 target, b = self.target_at(self.song_t + self.latency_s)
                 self.send(target)
                 if self.hud and abs(self.song_t - last_hud) >= 0.1:
-                    sys.stdout.write(self.hud_line(b))
-                    sys.stdout.flush()
+                    _say(sys.stdout, self.hud_line(b))
                     last_hud = self.song_t
                 if self.simulate:
                     self.player.advance(self.dt)

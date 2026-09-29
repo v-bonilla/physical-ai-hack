@@ -35,26 +35,37 @@ def _fake_follower(tmp_path, has_file: bool, calibrated: bool):
         def disconnect(self):
             calls.append(("disconnect",))
 
+        @property
+        def bus(self):
+            class Bus:
+                def disconnect(self, disable_torque=True):
+                    calls.append(("bus.disconnect", disable_torque))
+            return Bus()
+
     return Follower, Cfg, calls
 
 
+@pytest.mark.parametrize("release", [False, True])
 @pytest.mark.parametrize("has_file,calibrated", [(False, True), (True, False)])
-def test_uncalibrated_arm_refuses_without_motion(tmp_path, monkeypatch, has_file, calibrated):
+def test_uncalibrated_arm_refuses_without_motion(tmp_path, monkeypatch, has_file, calibrated, release):
     Follower, Cfg, calls = _fake_follower(tmp_path, has_file, calibrated)
     monkeypatch.setattr(rb, "import_follower", lambda: (Follower, Cfg))
-    arm = rb.LeRobotArm(port="/dev/tty.usbmodemX", robot_id="dancer")
-    assert calls[0][1]["disable_torque_on_disconnect"] is False
+    arm = rb.LeRobotArm(port="/dev/tty.usbmodemX", robot_id="dancer", release=release)
+    assert calls[0][1]["disable_torque_on_disconnect"] is release
     with pytest.raises(CalibrationError, match="lerobot-calibrate --robot.type=so101_follower "
                                                "--robot.port=/dev/tty.usbmodemX --robot.id=dancer"):
         arm.connect()
     if has_file:
-        assert ("connect", False) in calls and calls[-1] == ("disconnect",)
+        assert ("connect", False) in calls and calls[-1] == ("bus.disconnect", False)
+        assert ("disconnect",) not in calls  # the robot-level disconnect would honor release
     else:
         assert not any(c[0] == "connect" for c in calls)
 
 
 def test_cli_rejects_bad_safety_flags(beat_song):
-    for flags in (["--max-speed", "0"], ["--max-speed", "-5"], ["--margin", "-1"]):
+    bad = [["--max-speed", "0"], ["--max-speed", "-5"], ["--margin", "-1"]]
+    bad += [[f, v] for f in ("--max-speed", "--margin", "--amplitude", "--latency-ms") for v in ("nan", "inf", "-inf")]
+    for flags in bad:
         with pytest.raises(SystemExit):
             main(["dance", str(beat_song), "--simulate", *flags])
 
@@ -102,3 +113,41 @@ def test_auto_rejects_cached_librosa_when_beat_this_available(beat_song, monkeyp
     assert a["backend"] == "beat_this" and "cached" not in a
     b = an.analyze(beat_song, backend="auto")
     assert b["cached"] and "backend=beat_this (cached)" in an.summarize(b)
+
+
+def test_dead_terminal_still_eases_back(monkeypatch):
+    import contextlib
+
+    import dancebot.perform as pf
+
+    class DeadStream:
+        def write(self, s):
+            raise OSError(5, "Input/output error")
+
+        def flush(self):
+            raise OSError(5, "Input/output error")
+
+    @contextlib.contextmanager
+    def dying_key_reader():
+        try:
+            yield lambda: ""
+        finally:
+            raise OSError(5, "tcsetattr: Input/output error")  # the terminal is gone
+
+    class HangupPlayer(NullPlayer):
+        def time(self):
+            if self.sim_t >= 2.0:
+                raise KeyboardInterrupt  # SIGHUP is mapped to this
+            return super().time()
+
+    monkeypatch.setattr(pf, "key_reader", dying_key_reader)
+    monkeypatch.setattr(pf.sys, "stdout", DeadStream())
+    monkeypatch.setattr(pf.sys, "stderr", DeadStream())
+    start = np.array([5.0, -40.0, 60.0, 20.0, -3.0, 10.0])
+    arm = FakeArm(start_pose=start)
+    perf = Performer(arm, HangupPlayer(10.0, simulated=True), sway(20), BEATS, simulate=True, hud=True)
+    with pytest.raises(OSError):
+        perf.run()
+    assert np.abs(np.array(arm.commands)[:, 0] - start[0]).max() > 10  # it was dancing
+    assert np.allclose(arm.commands[-1], start)
+    assert not arm.connected
