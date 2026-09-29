@@ -119,6 +119,7 @@ class Performer:
         self.hud = hud
         self.base = np.zeros(len(JOINTS))
         self.lo = self.hi = None
+        self.sign = np.ones(len(JOINTS))
         self.log: list[tuple[float, np.ndarray]] = []
         self.last_cmd: np.ndarray | None = None
         self.song_t = 0.0
@@ -128,10 +129,15 @@ class Performer:
         start = np.asarray(start, dtype=float)
         self.start = start.copy()
         self.base = start.copy() if self.choreo.relative else np.zeros_like(start)
-        poses = np.nan_to_num(self.choreo.poses, nan=0.0) + self.base
+        g = JOINTS.index("gripper")
+        # a relative gripper move opens away from the nearer end of its 0..100 range
+        self.sign = np.ones(len(JOINTS))
+        if self.choreo.relative and start[g] > 50:
+            self.sign[g] = -1.0
+        poses = np.nan_to_num(self.choreo.poses, nan=0.0) * self.sign + self.base
         self.lo = np.minimum(poses.min(axis=0), start) - self.margin
         self.hi = np.maximum(poses.max(axis=0), start) + self.margin
-        g = JOINTS.index("gripper")  # absolute gripper range is 0..100 (unless it starts outside)
+        # absolute gripper range is 0..100 (unless it starts outside)
         self.lo[g] = max(self.lo[g], min(0.0, start[g]))
         self.hi[g] = min(self.hi[g], max(100.0, start[g]))
 
@@ -140,11 +146,11 @@ class Performer:
         if b < self.d0:
             # hold the start pose before the first downbeat, easing into phase 0 over the beat before it
             w = smoothstep(b - (self.d0 - 1))
-            first = self.base + pose_at(self.choreo, 0.0)
+            first = self.base + self.sign * pose_at(self.choreo, 0.0)
             return self.start + w * (first - self.start), b
         # hold the last pose after the last beat
         phase = min(b, float(self.n_beats - 1)) - self.d0
-        return self.base + pose_at(self.choreo, phase), b
+        return self.base + self.sign * pose_at(self.choreo, phase), b
 
     def safe(self, target: np.ndarray) -> np.ndarray:
         cmd = np.clip(target, self.lo, self.hi)
@@ -154,6 +160,8 @@ class Performer:
 
     def send(self, target: np.ndarray) -> None:
         cmd = self.safe(target)
+        if not np.all(np.isfinite(cmd)):
+            raise RuntimeError(f"non-finite command {cmd}; not sent")
         self.robot.send_pose(cmd)
         self.last_cmd = cmd
         self.log.append((self.song_t, cmd.copy()))
@@ -230,16 +238,25 @@ class Performer:
         finally:
             self.robot.disconnect()
 
+    def perform(self, start_pose: np.ndarray, player_opened: bool = False) -> None:
+        """Ease in, play and dance. Call inside session(); the stream opens before any motion."""
+        try:
+            if not player_opened:
+                self.player.open()  # a bad audio device fails here, before any motion
+            g = JOINTS.index("gripper")
+            if self.choreo.relative and np.nanmax(np.abs(self.choreo.poses[:, g])) > 0:
+                _say(sys.stderr, f"gripper starts at {start_pose[g]:.0f}, opens "
+                                 f"{'down (toward 0)' if self.sign[g] < 0 else 'up (toward 100)'}\n")
+            first, _ = self.target_at(self.latency_s)
+            self.ease(start_pose, first)
+            self.player.start()
+            self._dance_loop()
+        finally:
+            self.player.stop()
+
     def _run(self, csv_path: str | Path | None) -> dict:
         with self.session() as start_pose:
-            try:
-                self.player.open()  # a bad audio device fails here, before any motion
-                first, _ = self.target_at(self.latency_s)
-                self.ease(start_pose, first)
-                self.player.start()
-                self._dance_loop()
-            finally:
-                self.player.stop()
+            self.perform(start_pose)
         if csv_path:
             self.dump_csv(csv_path)
         return {"interrupted": self.interrupted, "ticks": len(self.log), "start_pose": start_pose,

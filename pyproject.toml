@@ -3,7 +3,7 @@ name = "dancebot"
 version = "0.1.0"
 description = "Make a LeRobot SO-101 arm dance to any song, locked to the beat."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
     "numpy",
     "scipy",
@@ -13,7 +13,7 @@ dependencies = [
     # robot
     "lerobot[feetech]",
     # Beat This! neural beat tracker
-    "beat-this @ https://github.com/CPJKU/beat_this/archive/main.zip",
+    "beat-this @ https://github.com/CPJKU/beat_this/archive/b95c8ab0c58c2d9fcfd40508ae8dffbc05ac4f5c.zip",
     "rotary-embedding-torch",
     "torch",
     "torchaudio",

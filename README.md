@@ -20,6 +20,13 @@ then dances for 20 s. It prints PASS / WARN / FAIL / SKIP per stage, the exact `
 use next, and saves everything to `smoke-report-<time>.txt` to paste back. Flags: `--song PATH`,
 `--port P`, `--robot-id ID` (default `dancer`), `--seconds N`, `--no-robot`, `--no-audio`.
 
+The last line is the verdict. Exit codes: `0` = `RESULT: PASS` (WARN allowed), `1` =
+`RESULT: FAIL`, `2` = `RESULT: PARTIAL (arm not tested)` or `(audio not tested)`, meaning no FAIL
+but the arm (port, calibration, connect or joints skipped) or the speaker was not exercised. Fix
+PARTIAL by plugging in the arm (it looks for `/dev/tty.usbmodem*`, `/dev/tty.usbserial*`,
+`/dev/tty.wchusbserial*`) or dropping `--no-robot` / `--no-audio`. Ctrl+C at any point eases the
+arm back, marks the current stage FAIL and still writes the report.
+
 | FAIL | Do this |
 |---|---|
 | env | `uv sync`, then rerun |

@@ -66,7 +66,45 @@ def test_downbeat_alignment_and_gripper_clamp():
     assert np.allclose(perf.target_at(1.5)[0], start + pose_at(groove(), 0))  # phase 0 on the downbeat
     assert np.allclose(perf.target_at(1.5 + 4 * 0.5)[0], start + pose_at(groove(), 4))
     assert "bar    1.1" in perf.hud_line(3.0) and "--" in perf.hud_line(1.0)
-    assert perf.hi[GRIP] == 100  # 90 + 25 would exceed the gripper range
+
+
+@pytest.mark.parametrize("grip0,clap", [(5.0, 25.0), (95.0, -25.0)])
+def test_gripper_opens_away_from_nearer_end(grip0, clap):
+    beats = [0.5 * k for k in range(40)]
+    start = np.array([0.0, 0, 0, 0, 0, grip0])
+    arm = FakeArm(start_pose=start)
+    perf = Performer(arm, NullPlayer(12.0, simulated=True), groove(), beats, downbeats=[0.0],
+                     simulate=True, hud=False)
+    perf.set_start_pose(start)
+    assert perf.target_at(4.5 * 0.5)[0][GRIP] == pytest.approx(grip0 + clap)  # clap on beat 4.5
+    perf.run()
+    grips = np.array(arm.commands)[:, GRIP]
+    assert grips.min() >= 0 and grips.max() <= 100
+    assert (grips.max() if clap > 0 else grips.min()) == pytest.approx(grip0 + clap, abs=0.5)
+
+
+def test_send_refuses_non_finite():
+    start = np.array([0.0, -30, 40, 10, 0, 20])
+
+    class NanOnce(FakeArm):
+        pass
+
+    arm = NanOnce(start_pose=start)
+    perf = Performer(arm, NullPlayer(12.0, simulated=True), groove(), [0.5 * k for k in range(40)],
+                     simulate=True, hud=False)
+    orig = perf.target_at
+    calls = {"n": 0}
+
+    def bad_target(t):
+        calls["n"] += 1
+        pose, b = orig(t)
+        return (pose * np.nan if calls["n"] == 60 else pose), b
+
+    perf.target_at = bad_target
+    with pytest.raises(RuntimeError, match="non-finite"):
+        perf.run()
+    cmds = np.array(arm.commands)
+    assert np.all(np.isfinite(cmds)) and np.allclose(cmds[-1], start) and not arm.connected
 
 
 def test_smoke_song(tmp_path):
@@ -105,6 +143,14 @@ def _args(song):
                               no_audio=True, latency_ms=80.0)
 
 
+class CountingArm(FakeArm):
+    connects = 0
+
+    def connect(self):
+        self.connects += 1
+        super().connect()
+
+
 @pytest.mark.parametrize("tracking,ok", [(0.6, True), (0.0, False)])
 def test_smoke_end_to_end(tmp_path, monkeypatch, beat_song, tracking, ok):
     monkeypatch.chdir(tmp_path)
@@ -113,7 +159,7 @@ def test_smoke_end_to_end(tmp_path, monkeypatch, beat_song, tracking, ok):
         __import__("dancebot.analyze", fromlist=["analyze"]).analyze(song, backend="librosa", use_cache=False),
         "librosa", 1.0))
     start = np.array([0.0, -30, 40, 10, 0, 20])
-    arm = FakeArm(start_pose=start, tracking=tracking)
+    arm = CountingArm(start_pose=start, tracking=tracking)
     code = smoke.run_smoke(_args(beat_song), arm=arm, fast=True, report_dir=tmp_path)
     reports = list(tmp_path.glob("smoke-report-*.txt"))
     assert len(reports) == 1
@@ -122,9 +168,57 @@ def test_smoke_end_to_end(tmp_path, monkeypatch, beat_song, tracking, ok):
                  "joint/gripper", "dance", "RESULT"):
         assert name in text
     assert not arm.connected and np.allclose(arm.commands[-1], start)
+    assert arm.connects == 1  # connect, joints and dance share one session
     if ok:
-        assert code == 0 and "RESULT: PASS" in text
+        assert code == 2 and "RESULT: PARTIAL (audio not tested)" in text  # --no-audio
         assert "[PASS] joint/wrist_roll" in text and "[PASS] dance" in text
     else:
         assert code != 0 and "[FAIL] joint/shoulder_pan" in text
         assert "[SKIP] dance" in text
+
+
+def test_smoke_gripper_near_top_steps_down(tmp_path, monkeypatch, beat_song):
+    monkeypatch.setattr(smoke, "stage_beats", lambda r, song, synthetic: (
+        __import__("dancebot.analyze", fromlist=["analyze"]).analyze(song, backend="librosa", use_cache=False),
+        "librosa", 1.0))
+    arm = CountingArm(start_pose=np.array([0.0, -30, 40, 10, 0, 99.0]))
+    smoke.run_smoke(_args(beat_song), arm=arm, fast=True, report_dir=tmp_path)
+    text = next(tmp_path.glob("smoke-report-*.txt")).read_text()
+    assert "[PASS] joint/gripper      start 99.0, commanded -3" in text
+
+
+def test_smoke_ctrl_c_before_arm(tmp_path, monkeypatch, beat_song):
+    def boom(r, no_audio):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(smoke, "stage_beats", lambda r, song, synthetic: (None, "librosa", 1.0))
+    monkeypatch.setattr(smoke, "stage_audio", boom)
+    arm = CountingArm()
+    code = smoke.run_smoke(_args(beat_song), arm=arm, fast=True, report_dir=tmp_path)
+    text = next(tmp_path.glob("smoke-report-*.txt")).read_text()
+    assert code == 1 and "[FAIL] audio" in text and "aborted" in text and "RESULT: FAIL" in text
+    assert arm.connects == 0 and "stage              status" in text
+
+
+def test_result_line():
+    r = smoke.Report()
+    for n in ("env", "audio", "port", "calibration", "connect", "joints", "dance"):
+        r.stages.append((n, "PASS", ""))
+    assert smoke.result_line(r) == ("RESULT: PASS", 0)
+    r.stages[1] = ("audio", "WARN", "")
+    assert smoke.result_line(r)[1] == 0
+    r.stages[2] = ("port", "SKIP", "")
+    assert smoke.result_line(r) == ("RESULT: PARTIAL (arm not tested)", 2)
+    r.stages[1] = ("audio", "SKIP", "")
+    assert smoke.result_line(r) == ("RESULT: PARTIAL (arm and audio not tested)", 2)
+    r.stages.append(("dance", "FAIL", ""))
+    assert smoke.result_line(r) == ("RESULT: FAIL", 1)
+
+
+def test_port_globs_mac(monkeypatch):
+    monkeypatch.delenv("DANCEBOT_FOLLOWER_PORT", raising=False)
+    monkeypatch.setattr(smoke.sys, "platform", "darwin")
+    fs = {"/dev/tty.usbmodem*": [], "/dev/tty.usbserial*": ["/dev/tty.usbserial-1"],
+          "/dev/tty.wchusbserial*": ["/dev/tty.wchusbserial-2"]}
+    monkeypatch.setattr(smoke.glob, "glob", lambda p: fs.get(p, []))
+    assert smoke.detect_ports() == ["/dev/tty.usbserial-1", "/dev/tty.wchusbserial-2"]

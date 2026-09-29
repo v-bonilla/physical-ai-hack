@@ -37,8 +37,9 @@ torch), then runs these stages and prints PASS, WARN, FAIL or SKIP for each:
 | dance | 20 s of the groove on the song with real audio |
 | summary | Stage table and the exact `dance` command to use next |
 
-The full output is saved to `smoke-report-<timestamp>.txt`. No arm plugged in: robot stages SKIP
-and the dance runs on a simulated arm.
+The arm connects once for the joint check and the dance. The full output is saved to
+`smoke-report-<timestamp>.txt`. Exit code 0 is a full PASS, 1 is any FAIL, and 2 is
+`PARTIAL`: no arm or no audio was found, so that part ran simulated and is not tested.
 
 ## The dance: groove
 
@@ -58,6 +59,8 @@ pose the arm holds at connect, in degrees (gripper in its 0 to 100 units). Keyfr
   the table.
 - The gripper claps on the snare (beats 2 and 4). The wrist nods on every beat. The dance shows the
   bar, not only the pulse.
+- The gripper opens away from whichever end of its range it starts nearer to, so the clap works
+  whether calibration maps closed to 0 or to 100.
 - `--scale` multiplies every offset (up to 1.5, with hard caps per joint). `--move sway` is the
   minimal fallback: base only, one swing per beat.
 
